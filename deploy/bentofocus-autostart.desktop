@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=BentoFocus
+Comment=Abre o painel do BentoFocus ao entrar na sessão
+Exec=/usr/bin/python3 @ROOT@/bentofocus/window.py
+Icon=@ROOT@/bentofocus/static/icon.svg
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=5
+NoDisplay=true

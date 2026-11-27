@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=BentoFocus
+Comment=Blocos de foco, hábitos e finanças
+Exec=/usr/bin/python3 @ROOT@/bentofocus/window.py
+Icon=@ROOT@/bentofocus/static/icon.svg
+StartupWMClass=bentofocus
+Categories=Utility;
+Terminal=false

@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BentoFocus mini</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="preload" href="/static/fonts/geist-mono.woff2" as="font" type="font/woff2" crossorigin>
+  <style>
+    /* Card arredondado sobre janela transparente. As classes (sz-*) e --w/--h vêm
+       do JS: o WebKit avalia container queries em pixels de tela, sem a escala
+       do sistema (1.3).
+         sz-tiny   (≤ 96px de altura)   → tira mínima: timer + botões
+         sz-narrow (≤ 230px de largura) → player estreito
+         sz-player (≥ 120px de altura)  → mostra player do Spotify quando ativo
+         sz-vibe   (≥ 220 × 120)        → GIF em tela cheia com HUD limpo embaixo */
+    html, body { height: 100%; margin: 0; overflow: hidden; background: transparent; }
+    body { user-select: none; }
+
+    .m {
+      position: absolute; inset: 0; overflow: hidden; cursor: grab; --w: 320px; --h: 240px;
+      border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.11); background: #141118;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+    }
+    .m:active { cursor: grabbing; }
+
+    /* Cenário GIF ocupando 100% do fundo (edge-to-edge). */
+    .stage { display: none; position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+    .sz-vibe .stage { display: block; }
+    .stage img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .scrim {
+      position: absolute; inset: 0; pointer-events: none;
+      background:
+        linear-gradient(to bottom, rgba(12, 10, 16, 0.36) 0%, transparent 28%),
+        linear-gradient(to top,
+          rgba(11, 9, 15, 0.94) 0%,
+          rgba(11, 9, 15, 0.78) 28%,
+          rgba(11, 9, 15, 0.36) 54%,
+          transparent 78%);
+    }
+    .m:hover .scrim, .m:focus-within .scrim {
+      background:
+        linear-gradient(to bottom, rgba(12, 10, 16, 0.62) 0%, transparent 32%),
+        linear-gradient(to top,
+          rgba(11, 9, 15, 0.96) 0%,
+          rgba(11, 9, 15, 0.80) 30%,
+          rgba(11, 9, 15, 0.38) 56%,
+          transparent 80%);
+    }
+
+    /* Luz ambiente (fallback para tiras compactas sem GIF). */
+    .amb { position: absolute; inset: -40%; background: center / cover no-repeat; filter: blur(38px) saturate(1.4);
+           opacity: 0; pointer-events: none; will-change: opacity; transform: translateZ(0); }
+    .amb.on { opacity: 0.32; }
+    .sz-vibe .amb, .sz-vibe .veil { display: none; }
+    .veil { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(18,16,20,.3), rgba(18,16,20,.8)); pointer-events: none; }
+
+    .body { position: relative; z-index: 2; height: 100%; box-sizing: border-box;
+            display: flex; flex-direction: column; justify-content: space-between;
+            gap: 8px; padding: 12px 15px 14px; }
+
+    /* --- topo: status + controles (só no hover/foco no modo GIF) --- */
+    .mtop { position: relative; z-index: 4; flex: none; display: flex; justify-content: space-between; align-items: center; gap: 8px;
+            font-size: 11px; color: var(--text); white-space: nowrap; }
+    .sz-vibe .mtop { opacity: 0; }
+    .sz-vibe:hover .mtop, .sz-vibe:focus-within .mtop { opacity: 1; }
+
+    .stpill { min-width: 0; display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px;
+              background: rgba(14, 12, 18, 0.72); border: 1px solid rgba(255, 255, 255, 0.1);
+              color: rgba(236, 230, 245, 0.9); font-size: 11px; overflow: hidden; }
+    .st { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .st::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-hi);
+                  margin-right: 6px; vertical-align: 1px; box-shadow: 0 0 8px var(--accent); }
+    .is-rest .st::before, .is-idle .st::before { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+
+    .acts { display: flex; align-items: center; gap: 4px; flex: none; }
+    .vc { display: inline-flex; align-items: center; gap: 1px; padding: 2px; border-radius: 999px;
+          background: rgba(14, 12, 18, 0.72); border: 1px solid rgba(255, 255, 255, 0.1); }
+    .vc button { width: 20px; height: 20px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%;
+                 background: none; color: rgba(236, 230, 245, 0.78); cursor: pointer; font: 600 12px/1 var(--sans); }
+    .vc button:hover { color: #fff; background: rgba(255, 255, 255, 0.14); }
+    .vc svg { width: 10px; height: 10px; fill: currentColor; }
+
+    .acts .actbtn { background: rgba(14, 12, 18, 0.72); border: 1px solid rgba(255, 255, 255, 0.1); color: rgba(236, 230, 245, 0.85);
+                    font: 500 11px var(--sans); height: 24px; min-width: 24px; padding: 0 9px; border-radius: 999px; cursor: pointer; }
+    .acts .actbtn:hover { color: #fff; background: rgba(34, 30, 40, 0.9); }
+    .acts .x { padding: 0; font-size: 14px; line-height: 22px; }
+
+    /* --- rodapé HUD: tempo grande + música limpa --- */
+    .hud { margin-top: auto; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+    .trow { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; }
+    .mt { flex: none; font: 400 clamp(26px, min(calc(var(--w) * 0.148), calc(var(--h) * 0.215)), 88px)/0.95 "Nunito", var(--sans);
+          font-variant-numeric: tabular-nums; letter-spacing: -0.03em; color: var(--text);
+          text-shadow: 0 2px 16px rgba(0, 0, 0, .65); }
+    .mt .s { color: rgba(236, 230, 245, 0.62); }
+    .is-rest .mt, .is-idle .mt { color: rgba(236, 230, 245, 0.78); }
+    .is-rest .mt .s, .is-idle .mt .s { color: rgba(236, 230, 245, 0.45); }
+
+    .hovermeta { min-width: 0; text-align: right; font-size: 11px; color: rgba(236, 230, 245, 0.68);
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                 text-shadow: 0 1px 6px rgba(0, 0, 0, .85); opacity: 0; }
+    .sz-vibe:hover .hovermeta, .sz-vibe:focus-within .hovermeta { opacity: 1; }
+    .hovermeta i { font-style: italic; font-family: var(--serif); font-size: 13px; color: rgba(236, 230, 245, 0.85); }
+
+    /* Progresso do bloco: linha fininha na borda inferior. */
+    .mbar { position: absolute; z-index: 5; left: 0; right: 0; bottom: 0; height: 2.5px; background: rgba(255, 255, 255, 0.08); }
+    .mbar i { display: block; height: 100%; background: var(--accent-hi); transform-origin: left; transform: scaleX(0); will-change: transform; }
+    .is-rest .mbar i { background: var(--ok); }
+
+    /* --- player do Spotify --- */
+    .music { flex: none; display: none; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+    .sz-player .music { display: grid; }
+
+    .songmeta { display: flex; align-items: center; gap: 9px; min-width: 0; }
+    .cover { width: 34px; height: 34px; flex: none; border-radius: 7px;
+             background: linear-gradient(135deg, #2c2534, #1d1a21) center / cover no-repeat;
+             border: 1px solid rgba(255, 255, 255, 0.14);
+             box-shadow: 0 2px 10px rgba(0, 0, 0, .55); }
+
+    .trk { min-width: 0; line-height: 1.24; text-shadow: 0 1px 6px rgba(0, 0, 0, .8); }
+    .trk b, .trk span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .trk b { font-weight: 500; font-size: 12.5px; color: var(--text); }
+    .trk span { font-size: 11px; color: rgba(236, 230, 245, 0.68); }
+    .trk span em { font-style: normal; }
+
+    /* Equalizador: três barrinhas ao lado do artista, só tocando. */
+    .eq { display: none; gap: 2px; height: 9px; align-items: flex-end; margin-right: 5px; vertical-align: -1px; }
+    .playing .eq { display: inline-flex; }
+    .eq i { width: 2px; height: 100%; border-radius: 1px; background: var(--accent-hi); transform-origin: bottom; transform: scaleY(0.3); }
+
+    .ctl { display: flex; align-items: center; gap: 2px; }
+    .ctl button { width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 50%; background: none;
+                  color: rgba(236, 230, 245, 0.62); cursor: pointer; }
+    .m:hover .ctl button:not(.pp), .m:focus-within .ctl button:not(.pp) { color: rgba(236, 230, 245, 0.85); }
+    .ctl button:not(.pp):hover { color: #fff; background: rgba(255, 255, 255, 0.12); }
+    .ctl button.pp { width: 32px; height: 32px; background: var(--text); color: var(--bg); box-shadow: 0 2px 10px rgba(0,0,0,.45); }
+    .ctl button.pp:hover { background: #fff; }
+    .ctl svg { width: 13px; height: 13px; fill: currentColor; }
+    .ctl .pp svg { width: 13px; height: 13px; }
+
+    .open { justify-self: start; display: inline-flex; align-items: center; gap: 6px;
+            border: 1px solid rgba(255, 255, 255, .14); background: rgba(14, 12, 18, 0.65);
+            color: rgba(236, 230, 245, 0.82); border-radius: 999px; padding: 5px 11px; font-size: 11px; cursor: pointer; }
+    .sz-vibe .open { opacity: 0; }
+    .sz-vibe:hover .open, .sz-vibe:focus-within .open { opacity: 1; }
+    .open:hover { color: #fff; background: rgba(28, 24, 34, 0.85); }
+    .open svg { width: 12px; height: 12px; fill: currentColor; }
+
+    /* Volume toast (rodinha do mouse sobre a música). */
+    .vtoast { position: absolute; z-index: 7; left: 50%; top: 44px; transform: translate(-50%, -6px); opacity: 0; pointer-events: none;
+              display: flex; align-items: center; gap: 8px; padding: 5px 11px; border-radius: 999px; font: 500 11px var(--sans); color: var(--text);
+              background: rgba(10, 9, 12, 0.85); border: 1px solid rgba(255,255,255,.12); }
+    .vtoast.on { opacity: 1; transform: translate(-50%, 0); }
+    .vtoast i { width: 60px; height: 3px; border-radius: 3px; background: rgba(255,255,255,.15); overflow: hidden; }
+    .vtoast i b { display: block; height: 100%; background: var(--text); }
+
+    /* Alça de redimensionar (canto inferior direito). */
+    .grip { position: absolute; z-index: 6; right: 2px; bottom: 4px; width: 14px; height: 14px; cursor: nwse-resize; opacity: 0.25; }
+    .m:hover .grip { opacity: 0.7; }
+    .grip svg { width: 100%; height: 100%; stroke: var(--muted); }
+
+    /* --- modos compactos (sem GIF ou muito estreito) ------------------------- */
+    @media (prefers-reduced-motion: no-preference) {
+      .mtop, .hovermeta, .open, .amb, .vtoast, .grip { transition: opacity .2s ease, transform .2s ease; }
+    }
+
+    .sz-narrow .ctl [data-a="previous"], .sz-narrow .ctl [data-a="next"], .sz-narrow .hovermeta { display: none; }
+    .sz-narrow .cover { width: 28px; height: 28px; }
+    .sz-narrow .long { display: none; }
+
+    .sz-tiny .body { flex-direction: row; align-items: center; gap: 10px; padding: 0 18px 0 14px; }
+    .sz-tiny .mtop { order: 2; }
+    .sz-tiny .stpill, .sz-tiny .vc, .sz-tiny .hovermeta, .sz-tiny .long { display: none; }
+    .sz-tiny .hud { order: 1; flex: 1 1 auto; margin-top: 0; gap: 0; }
+    .sz-tiny .mt { font-size: clamp(20px, min(calc(var(--w) * 0.16), calc(var(--h) * 0.48)), 56px); text-shadow: none; }
+  </style>
+</head>
+<body>
+<div class="m" id="m">
+  <div class="stage" id="stage">
+    <img id="vimg" alt="">
+    <div class="scrim"></div>
+  </div>
+  <div class="amb" id="ambA"></div>
+  <div class="amb" id="ambB"></div>
+  <div class="veil"></div>
+  <div class="body">
+    <div class="mtop">
+      <span class="stpill" id="stpill"><span class="st" id="st"></span></span>
+      <span class="acts">
+        <span class="vc">
+          <button type="button" id="vprev" title="cena anterior" aria-label="Cena anterior">‹</button>
+          <button type="button" id="vtoggle" title="pausar animação" aria-label="Pausar animação"></button>
+          <button type="button" id="vnext" title="próxima cena" aria-label="Próxima cena">›</button>
+        </span>
+        <button class="actbtn" id="plus" title="mais 5 minutos">+5<span class="long"> min</span></button>
+        <button class="actbtn x" id="x" title="fechar o miniplayer" aria-label="Fechar miniplayer">×</button>
+      </span>
+    </div>
+    <div class="hud">
+      <div class="trow">
+        <span class="mt" id="t"></span>
+        <span class="hovermeta" id="hovermeta"></span>
+      </div>
+      <div class="music" id="music"></div>
+    </div>
+  </div>
+  <div class="vtoast" id="vtoast"><span id="vicon"></span><i><b id="vtbar"></b></i><span id="vtpct"></span></div>
+  <div class="mbar"><i id="bar"></i></div>
+  <div class="grip" id="grip" title="redimensionar"><svg viewBox="0 0 14 14"><path d="M13 5 5 13M13 9l-4 4" stroke-width="1.4" stroke-linecap="round"/></svg></div>
+</div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const pad = (n) => String(n).padStart(2, "0");
+  const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const clock = (sec) => `${Math.floor(sec / 60)}:${pad(Math.floor(sec % 60))}`;
+  const native = window.webkit?.messageHandlers?.bento;
+  // Só escreve quando muda: o WebKit redesenha mesmo com o texto igual, e cada
+  // quadro desenhado custa caro nesta janela.
+  const setText = (el, v) => { if (el && el._v !== v) { el._v = v; el.textContent = v; } };
+  const setHTML = (el, v) => { if (el && el._v !== v) { el._v = v; el.innerHTML = v; } };
+  const setTf = (el, v) => { if (el && el._tf !== v) { el._tf = v; el.style.transform = v; } };
+  const ICON = {
+    prev: '<svg viewBox="0 0 24 24"><path d="M6 5h2.4v14H6zM20 5.6v12.8a.6.6 0 0 1-.9.5L9.6 12.5a.6.6 0 0 1 0-1L19.1 5.1a.6.6 0 0 1 .9.5z"/></svg>',
+    next: '<svg viewBox="0 0 24 24"><path d="M15.6 5H18v14h-2.4zM4 5.6v12.8a.6.6 0 0 0 .9.5l9.5-6.4a.6.6 0 0 0 0-1L4.9 5.1a.6.6 0 0 0-.9.5z"/></svg>',
+    play: '<svg viewBox="0 0 24 24"><path d="M7 4.8v14.4a.8.8 0 0 0 1.2.7l11.6-7.2a.8.8 0 0 0 0-1.4L8.2 4.1a.8.8 0 0 0-1.2.7z"/></svg>',
+    pause: '<svg viewBox="0 0 24 24"><rect x="5.5" y="4" width="4.5" height="16" rx="1.2"/><rect x="14" y="4" width="4.5" height="16" rx="1.2"/></svg>',
+    note: '<svg viewBox="0 0 24 24"><path d="M9 17.5a3 3 0 1 1-2-2.83V5.6a1 1 0 0 1 .76-.97l10-2.5A1 1 0 0 1 19 3.1V15.5a3 3 0 1 1-2-2.83V7.3l-8 2v8.2z"/></svg>',
+    vol: (v) => '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor" stroke="none"/>'
+       + (v <= 0 ? '<path d="M16 9.5l5 5M21 9.5l-5 5"/>' : '<path d="M15.5 9.5a3.5 3.5 0 0 1 0 5"/>' + (v > 0.5 ? '<path d="M18 7a7 7 0 0 1 0 10"/>' : '')) + '</svg>',
+  };
+  let s = null, mu = null, closing = null, lastIntent = "";
+
+  // --- janela: arrastar, redimensionar, fechar ---------------------------------
+  // O GTK trabalha em pixels de tela; o mouse aqui vem em pixels CSS (escala do
+  // sistema, ex.: 1.3), então o deslocamento é convertido.
+  const dpr = window.devicePixelRatio || 1;
+  let mode = null, origin = null;
+  document.addEventListener("mousedown", (e) => {
+    if (e.button !== 0 || e.target.closest("button, input")) return;
+    mode = e.target.closest("#grip") ? "resize" : "drag";
+    origin = { x: e.screenX, y: e.screenY };
+    native?.postMessage(mode === "resize" ? "resizestart" : "dragstart");
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!mode) return;
+    const dx = Math.round((e.screenX - origin.x) * dpr), dy = Math.round((e.screenY - origin.y) * dpr);
+    native?.postMessage(`${mode === "resize" ? "resize" : "move"}:${dx}:${dy}`);
+  });
+  document.addEventListener("mouseup", () => { if (mode) native?.postMessage("dragend"); mode = null; });
+  const close = () => { native?.postMessage("close"); window.close(); };
+  $("x").onclick = close;
+  $("plus").onclick = async () => { const r = await fetch("/api/focus/extend?minutes=5", { method: "POST" }); if (r.ok) s = await r.json(); render(); };
+
+  // --- companheiro (gif motivacional + controle de movimento) ------------------
+  const VIBES = [
+    { slug: "night-room", label: "noite chuvosa" },
+    { slug: "night-study", label: "mesa de estudo" },
+    { slug: "sleepy-cat", label: "gatinho dormindo" },
+    { slug: "bonfire", label: "fogueira na neve" },
+    { slug: "moon-cottage", label: "cabana ao luar" },
+    { slug: "cyber-rain", label: "chuva cyberpunk" },
+    { slug: "neon-cafe", label: "café da madrugada" },
+    { slug: "late-desk", label: "mesa na madrugada" },
+    { slug: "ghibli-study", label: "estudo ghibli" },
+    { slug: "autumn-temple", label: "templo de outono" },
+    { slug: "shoji-sakura", label: "sakura no lago" },
+    { slug: "snow-station", label: "estação na neve" },
+    { slug: "forest-creek", label: "riacho na mata" },
+    { slug: "day-room", label: "quarto com plantas" },
+    { slug: "night-gaming", label: "madrugada no quarto" },
+  ];
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  let vibeIdx = 0;
+  let vibePaused = reduceMotion.matches;
+  try {
+    const savedIdx = +localStorage.getItem("bf.vibe");
+    if (Number.isInteger(savedIdx) && savedIdx >= 0 && savedIdx < VIBES.length) vibeIdx = savedIdx;
+    const savedPause = localStorage.getItem("bf.vibePaused");
+    if (savedPause !== null) vibePaused = savedPause === "1";
+  } catch {}
+
+  let vibeToken = 0, vibeTimer = 0, vibePending = "", flashTimer = 0;
+  function mountVibeImg(src, alt) {
+    const cur = $("vimg");
+    if (!cur || cur._src === src) return;
+    const next = document.createElement("img");
+    next.id = "vimg";
+    next.alt = alt;
+    next._src = src;
+    next.src = src;
+    cur.replaceWith(next);
+    // Solta o BitmapImage anterior imediatamente fora do DOM para parar seu timer.
+    cur.removeAttribute("src");
+  }
+  function syncVibe(debounceMs = 0) {
+    const v = VIBES[vibeIdx];
+    const visible = sizeClass.includes("sz-vibe");
+    const animate = visible && !vibePaused;
+    const png = `/static/companions/${v.slug}.png`;
+    const gif = `/static/companions/${v.slug}.gif`;
+    const target = animate ? gif : png;
+    const tog = $("vtoggle");
+    if (tog) {
+      const icon = vibePaused ? "play" : "pause";
+      if (tog.dataset.icon !== icon) { tog.innerHTML = ICON[icon]; tog.dataset.icon = icon; }
+      tog.setAttribute("aria-label", vibePaused ? "Retomar animação" : "Pausar animação");
+      tog.title = `${v.label} · ${vibePaused ? "retomar" : "pausar"}`;
+    }
+    renderHoverMeta();
+    const cur = $("vimg");
+    if (cur?._src === target) { vibePending = ""; clearTimeout(vibeTimer); return; }
+    if (vibePending === target) return;
+    vibePending = target;
+    clearTimeout(vibeTimer);
+    const tok = ++vibeToken;
+    if (!animate) { vibePending = ""; mountVibeImg(png, v.label); return; }
+    // Na troca de cena, exibe frame 0 (.png), assenta cliques rápidos e só então
+    // pré-decodifica e monta um <img> novo (evita rajada/catch-up de quadros no WebKitGTK).
+    if (cur?._src !== png) mountVibeImg(png, v.label);
+    const loadGif = () => {
+      const pre = new Image();
+      const done = () => {
+        if (tok !== vibeToken) return;
+        vibePending = "";
+        mountVibeImg(gif, v.label);
+      };
+      pre.src = gif;
+      if (pre.decode) pre.decode().then(done, () => { pre.complete ? done() : (pre.onload = done); });
+      else pre.onload = done;
+    };
+    if (debounceMs > 0) vibeTimer = setTimeout(loadGif, debounceMs);
+    else loadGif();
+  }
+  let sceneFlash = 0;
+  function stepVibe(delta) {
+    vibeIdx = (vibeIdx + delta + VIBES.length) % VIBES.length;
+    sceneFlash = Date.now() + 1600;
+    try { localStorage.setItem("bf.vibe", String(vibeIdx)); } catch {}
+    syncVibe(200);
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(renderHoverMeta, 1650);
+  }
+  $("vprev").onclick = () => stepVibe(-1);
+  $("vnext").onclick = () => stepVibe(1);
+  $("vtoggle").onclick = () => {
+    vibePaused = !vibePaused;
+    try { localStorage.setItem("bf.vibePaused", vibePaused ? "1" : "0"); } catch {}
+    syncVibe();
+  };
+  reduceMotion.addEventListener("change", () => {
+    try { if (localStorage.getItem("bf.vibePaused") === null) { vibePaused = reduceMotion.matches; syncVibe(); } } catch {}
+  });
+
+  // --- tamanho -------------------------------------------------------------------
+  let sizeClass = "";
+  function fit() {
+    const w = innerWidth, h = innerHeight, m = $("m");
+    m.style.setProperty("--w", `${w}px`);
+    m.style.setProperty("--h", `${h}px`);
+    sizeClass = [h <= 96 && "sz-tiny", w <= 230 && "sz-narrow", h >= 120 && "sz-player", w >= 220 && h >= 120 && "sz-vibe"].filter(Boolean).join(" ");
+    m.className = m.className.replace(/\ssz-\w+/g, "") + (sizeClass ? " " + sizeClass : "");
+    syncVibe();
+  }
+  addEventListener("resize", fit);
+  fit();
+
+  // --- dados ---------------------------------------------------------------------
+  async function load() {
+    try { const r = await fetch("/api/state"); if (r.ok) s = await r.json(); } catch {}
+  }
+  let offCount = 0, songAt = 0;
+  async function loadMusic() {
+    try {
+      const r = await fetch("/api/music");
+      if (!r.ok) return;
+      const m = await r.json();
+      // Uma leitura "fechado" isolada não apaga o player (evita piscar).
+      if (!m.running && mu?.running && ++offCount < 2) return;
+      offCount = 0;
+      if (m.running && !m.title && mu?.title) Object.assign(m, { title: mu.title, artist: mu.artist, art: mu.art });
+      mu = m;
+      songAt = Date.now();
+      renderMusic();
+    } catch {}
+  }
+  async function music(action) {
+    if (action === "playpause" && mu) { mu.playing = !mu.playing; songAt = Date.now(); renderMusic(); }  // resposta imediata
+    const r = await fetch(`/api/music/${action}`, { method: "POST" });
+    if (r.ok) setTimeout(loadMusic, 400);
+  }
+
+  // --- render: player ------------------------------------------------------------
+  let built = null;  // "player" | "open" | null
+  let ambFront = "ambA";
+  function setArt(url) {
+    const img = new Image();
+    img.onload = () => {
+      const css = `url('${esc(url)}')`;
+      $("music").querySelectorAll(".cover").forEach((el) => (el.style.backgroundImage = css));
+      if (!sizeClass.includes("sz-vibe")) {
+        const back = ambFront === "ambA" ? "ambB" : "ambA";
+        $(back).style.backgroundImage = css;
+        $(back).classList.add("on");
+        $(ambFront).classList.remove("on");
+        ambFront = back;
+      }
+    };
+    img.src = url;
+  }
+  const ambOff = () => { $("ambA").classList.remove("on"); $("ambB").classList.remove("on"); };
+  function renderMusic() {
+    const el = $("music");
+    if (!mu?.running) {
+      if (built !== "open") {
+        el.innerHTML = `<button class="open" data-a="open">${ICON.note}abrir Spotify</button>`;
+        el.querySelector("button").onclick = () => music("open");
+        el.classList.remove("playing");
+        delete el.dataset.art;
+        built = "open";
+      }
+      ambOff();
+      return;
+    }
+    if (built !== "player") {
+      el.innerHTML = `
+        <div class="songmeta">
+          <i class="cover"></i>
+          <div class="trk"><b></b><span><i class="eq"><i></i><i></i><i></i></i><em></em></span></div>
+        </div>
+        <div class="ctl">
+          <button data-a="previous" title="anterior">${ICON.prev}</button>
+          <button class="pp" data-a="playpause"></button>
+          <button data-a="next" title="próxima">${ICON.next}</button>
+        </div>`;
+      el.querySelectorAll("button[data-a]").forEach((b) => (b.onclick = () => music(b.dataset.a)));
+      delete el.dataset.art;
+      built = "player";
+    }
+    el.classList.toggle("playing", !!mu.playing);
+    setText(el.querySelector(".trk b"), mu.title || "Spotify");
+    setText(el.querySelector(".trk em"), mu.artist || (mu.playing ? "tocando" : "pausado"));
+    const pp = el.querySelector(".pp");
+    const icon = mu.playing ? "pause" : "play";
+    if (pp.dataset.icon !== icon) { pp.innerHTML = ICON[icon]; pp.dataset.icon = icon; pp.title = mu.playing ? "pausar" : "tocar"; }
+    if (mu.art && el.dataset.art !== mu.art) { el.dataset.art = mu.art; setArt(mu.art); }
+    if (typeof mu.volume === "number" && Date.now() - volTouched > 1500) vol = mu.volume;
+  }
+
+  // --- relógio do equalizador (20 fps) -------------------------------------------
+  // Mexe o equalizador no JS para evitar animação CSS a 60 fps no WebKit GTK/X11.
+  // Não roda com a música parada, em reduced-motion ou com a janela oculta.
+  const FPS = 20;
+  let bars = [];
+  setInterval(() => {
+    if (document.hidden || reduceMotion.matches || !sizeClass.includes("sz-player") || !(mu?.running && mu.playing)) return;
+    if (!bars[0]?.isConnected) bars = [...$("music").querySelectorAll(".eq i")];
+    const t = performance.now() / 1000;
+    bars.forEach((bar, i) => {
+      const wave = 0.5 + 0.5 * Math.sin(t * (7 + i * 2.3) + i * 1.7);
+      bar.style.transform = `scaleY(${(0.25 + 0.75 * wave).toFixed(2)})`;
+    });
+  }, 1000 / FPS);
+
+  // --- volume (rodinha do mouse sobre a música) ----------------------------------
+  let vol = 0.5, volTouched = 0, volTimer = null, toastTimer = null;
+  function setVolume(v) {
+    vol = Math.min(1, Math.max(0, v));
+    volTouched = Date.now();
+    showVolToast();
+    clearTimeout(volTimer);
+    volTimer = setTimeout(() => fetch(`/api/music/volume?value=${vol.toFixed(3)}`, { method: "POST" }), 120);
+  }
+  function showVolToast() {
+    $("vicon").innerHTML = ICON.vol(vol).replace("<svg", '<svg width="13" height="13" style="fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round"');
+    $("vtbar").style.width = `${Math.round(vol * 100)}%`;
+    $("vtpct").textContent = `${Math.round(vol * 100)}%`;
+    $("vtoast").classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => $("vtoast").classList.remove("on"), 900);
+  }
+  $("m").addEventListener("wheel", (e) => {
+    if (!mu?.running || !e.target.closest(".music, .songmeta, .trk, .ctl")) return;
+    e.preventDefault();
+    setVolume(vol + (e.deltaY < 0 ? 0.05 : -0.05));
+  }, { passive: false });
+
+  // --- render: bloco -----------------------------------------------------------------
+  const fmtMin = (m) => { m = Math.round(m || 0); return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${pad(m % 60)}m`; };
+  function renderHoverMeta() {
+    const scene = VIBES[vibeIdx]?.label || "";
+    const meta = $("hovermeta");
+    if (!meta) return;
+    if (Date.now() < sceneFlash || !lastIntent) {
+      setText(meta, s?.today_blocks && !lastIntent ? `${fmtMin(s.today_focus_min)} · ${scene}` : scene);
+    } else {
+      setHTML(meta, `<i>${esc(lastIntent)}</i>`);
+    }
+  }
+  function render() {
+    if (!s) return;
+    const now = Date.now();
+    const left = (iso) => Math.max(0, Math.ceil((new Date(iso).getTime() - now) / 1000));
+    let state, label, until, start, intent = "";
+    if (s.current) {
+      state = "focus"; until = s.ends_at; start = s.current.started_at;
+      label = s.plan ? `foco · bloco ${s.plan.index} de ${s.plan.total}` : "foco";
+      intent = s.current.intention;
+    } else if (s.plan?.next_at) {
+      state = "rest"; until = s.plan.next_at; start = s.last?.ended_at;
+      label = `pausa · bloco ${s.plan.index + 1} às ${new Date(s.plan.next_at).toTimeString().slice(0, 5)}`;
+      intent = s.plan.intention;
+    } else if (s.break_until) {
+      state = "rest"; until = s.break_until; start = s.last?.ended_at;
+      label = "pausa"; intent = "bloco concluído";
+    } else {
+      state = "idle"; label = "sem bloco"; intent = "fechando…";
+    }
+
+    const cls = `m is-${state} ${sizeClass}`;
+    if ($("m").className !== cls) $("m").className = cls;
+    setText($("st"), label);
+    lastIntent = intent || "";
+    renderHoverMeta();
+    // Na pausa, "+5" retoma o bloco que acabou (mais 5 min de foco).
+    const plus = $("plus");
+    if (plus._st !== state) {
+      plus._st = state;
+      plus.style.display = state === "idle" ? "none" : "";
+      plus.title = state === "rest" ? "mais 5 min de foco (retoma o bloco)" : "mais 5 minutos";
+    }
+    if (state === "idle") {
+      setHTML($("t"), "--:--");
+      setTf($("bar"), "scaleX(0)");
+      closing ??= setTimeout(close, 4000);  // nada rolando: some sozinho
+      return;
+    }
+    clearTimeout(closing); closing = null;
+    const t = left(until);
+    setHTML($("t"), `${pad(Math.floor(t / 60))}<span class="s">:${pad(t % 60)}</span>`);
+    const total = (new Date(until) - new Date(start)) / 1000;
+    setTf($("bar"), `scaleX(${(total > 0 ? Math.min(1, 1 - t / total) : 0).toFixed(4)})`);
+  }
+
+  load().then(render);
+  loadMusic();
+  setInterval(load, 1500);
+  setInterval(loadMusic, 2500);
+  setInterval(render, 250);
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+[Unit]
+Description=BentoFocus: coletor de foco, bloqueio e painel local
+# Precisa da sessão gráfica (DISPLAY, D-Bus) para ler janelas e mandar notificações.
+PartOf=graphical-session.target
+After=graphical-session.target
+# Nunca desiste de reiniciar (o padrão para depois de 5 falhas em 10s).
+StartLimitIntervalSec=0
+
+[Service]
+WorkingDirectory=@ROOT@
+ExecStart=@ROOT@/.venv/bin/python -m bentofocus
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+.env
+**/.env
+**/.env.*
+!.env.example
+!agent/.env.example
+agent/.env
+last_chat_id.txt
+agent/last_chat_id.txt
+.pytest_cache/
+*.log
+bentofocus/static/companions/

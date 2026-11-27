@@ -1,0 +1,14 @@
+[project]
+name = "bentofocus"
+version = "0.1.0"
+description = "Personal local productivity hub for Linux (X11): distraction-blocking focus blocks, habits, and simple finances."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "sqlmodel>=0.0.22",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

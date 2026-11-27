@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BentoFocus</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script defer src="/static/app.js"></script>
+  <script defer src="/static/vendor/alpine.min.js"></script>
+</head>
+<body>
+<div class="shell" x-data="app()" x-init="init()" x-cloak>
+
+  <header class="top">
+    <div>
+      <h1 class="date" x-text="dateTitle()"></h1>
+      <div class="sub" x-show="s">
+        <b x-text="s?.active_30"></b> de 30 dias ativos
+        · semana <b x-text="fmtMin(s?.this_week_min)"></b>
+        <template x-if="s?.best_week_min > 0"><span> · recorde <span x-text="fmtMin(s.best_week_min)"></span></span></template>
+      </div>
+    </div>
+    <div class="nav">
+      <div class="tablist" role="tablist" aria-label="Seções do painel" @keydown="onTabKey($event)">
+        <button type="button" role="tab" id="tab-hoje" class="tab"
+                aria-selected="true" :aria-selected="view==='hoje' ? 'true' : 'false'"
+                :tabindex="view==='hoje' ? 0 : -1"
+                @click="selectView('hoje')">hoje</button>
+        <button type="button" role="tab" id="tab-financas" class="tab"
+                aria-selected="false" :aria-selected="view==='financas' ? 'true' : 'false'"
+                :tabindex="view==='financas' ? 0 : -1"
+                @click="selectView('financas')">finanças</button>
+      </div>
+      <button type="button" id="btn-resumo" class="ghost sm summary-btn"
+              x-show="view==='hoje' && s"
+              @click="openSummary()"
+              title="Resumo e exportação do dia em Markdown">resumo</button>
+      <span class="status" :title="collectorTitle()">
+        <i class="dot" :class="!collectorOk() && 'warn'"></i><span x-text="collectorOk() ? 'coletor ativo' : 'coletor com problema'"></span>
+      </span>
+    </div>
+  </header>
+
+  <!-- =================================================================== HOJE (FOCO + MÉTRICAS) -->
+  <main id="panel-hoje" class="grid" role="tabpanel" aria-labelledby="tab-hoje" :hidden="view!=='hoje' || !s">
+
+    <!-- Bloco de foco -->
+    <section class="card focus s8" :class="s?.current && 'running'">
+      <!-- rodando -->
+      <template x-if="s?.current">
+        <div style="display:contents">
+          <p class="label">
+            <span x-text="s.plan ? `bloco ${s.plan.index} de ${s.plan.total}` : 'bloco em andamento'"></span>
+            <span class="r" x-text="'termina às ' + hhmm(s.ends_at)"></span>
+          </p>
+          <p class="now-intent" :class="!s.current.intention && 'empty'" x-text="s.current.intention || 'sem intenção definida'"></p>
+          <div class="timer"><span x-text="countdown(s.ends_at).mm"></span><span class="sec">:<span x-text="countdown(s.ends_at).ss"></span></span></div>
+          <div class="track"><i :style="`width:${progress()}%`"></i></div>
+          <div class="controls" style="margin-top:auto;padding-top:22px">
+            <div class="tags">
+              <span class="locked">bloqueado</span>
+              <template x-for="b in blockedNow()" :key="b"><span class="tag" x-text="b"></span></template>
+            </div>
+            <span style="margin-left:auto"></span>
+            <button class="ghost" @click="req('POST', '/api/mini')" title="Timer pequeno sempre por cima">mini</button>
+            <button class="ghost" @click="post('/api/focus/extend?minutes=5')">+5 min</button>
+            <button class="ghost" @click="post('/api/focus/stop')" :title="s.plan ? 'Para este bloco e encerra a sequência' : ''">parar</button>
+          </div>
+        </div>
+      </template>
+
+      <!-- pausa dentro de uma sequência -->
+      <template x-if="!s?.current && s?.plan?.next_at">
+        <div style="display:contents">
+          <p class="label">
+            <span>pausa</span>
+            <span class="r" x-text="`bloco ${s.plan.index + 1} de ${s.plan.total} começa às ${hhmm(s.plan.next_at)}`"></span>
+          </p>
+          <p class="now-intent" :class="!s.plan.intention && 'empty'" x-text="s.plan.intention || 'sem intenção definida'"></p>
+          <div class="timer rest"><span x-text="countdown(s.plan.next_at).mm"></span><span class="sec">:<span x-text="countdown(s.plan.next_at).ss"></span></span></div>
+          <div class="track rest"><i :style="`width:${breakProgress()}%`"></i></div>
+          <p class="quiet" style="margin:0">bloqueio liberado; o próximo bloco começa sozinho</p>
+          <div class="controls" style="margin-top:auto;padding-top:18px">
+            <span style="margin-left:auto"></span>
+            <button class="ghost" @click="req('POST', '/api/mini')">mini</button>
+            <button class="ghost" @click="post('/api/focus/extend?minutes=5')" title="Retoma o bloco que acabou">+5 min de foco</button>
+            <button class="ghost" @click="post('/api/focus/skip-break')">começar agora</button>
+            <button class="ghost" @click="post('/api/focus/end-plan')">encerrar sequência</button>
+          </div>
+        </div>
+      </template>
+
+      <!-- parado: formulário -->
+      <template x-if="!s?.current && !s?.plan?.next_at">
+        <div style="display:contents">
+          <p class="label">
+            <span x-text="inBreak() ? 'pausa' : 'próximo bloco'"></span>
+            <span class="r" x-show="s?.today_blocks" x-text="`${s?.today_blocks} ${s?.today_blocks === 1 ? 'bloco' : 'blocos'} hoje`"></span>
+          </p>
+          <div class="pause" x-show="inBreak()">
+            <span class="t" x-text="`${countdown(s?.break_until).mm}:${countdown(s?.break_until).ss}`"></span>
+            <span x-text="`último bloco: ${fmtMin(s?.last?.focus_min)} de foco`"></span>
+            <button class="link resume" @click="post('/api/focus/extend?minutes=5')" title="Retoma o bloco que acabou">+5 min de foco</button>
+          </div>
+          <input class="intent" x-ref="intent" x-model="form.intention" maxlength="140"
+                 placeholder="qual é a única coisa deste bloco?" @keydown.enter="start()">
+          <div class="insight" x-html="insight()"></div>
+          <div class="controls">
+            <div class="seg" title="minutos por bloco">
+              <template x-for="m in s?.durations || []" :key="m">
+                <button :class="form.minutes===m && 'on'" @click="form.minutes=m" x-text="m"></button>
+              </template>
+            </div>
+            <div class="seg" title="blocos em sequência (os seguintes começam sozinhos)">
+              <template x-for="c in s?.cycles || []" :key="c">
+                <button :class="form.cycles===c && 'on'" @click="form.cycles=c" x-text="`${c}×`"></button>
+              </template>
+            </div>
+            <button class="pill" :class="form.allow_youtube && 'on'" @click="form.allow_youtube=!form.allow_youtube"
+                    title="Para aulas: o YouTube não é fechado neste bloco"><i class="box"></i>libera YouTube</button>
+            <button class="pill" :class="form.spotify && 'on'" @click="toggleSpotify()"
+                    title="Abre o Spotify e dá play quando o bloco começa"><i class="box"></i>Spotify</button>
+            <button class="go" @click="start()">começar</button>
+          </div>
+        </div>
+      </template>
+    </section>
+
+    <!-- Tempo de foco hoje + Hábitos (Leitura, Academia, Faculdade) -->
+    <section class="card s4">
+      <p class="label"><span>foco hoje</span></p>
+      <div class="big" x-html="bigMin(s?.today_focus_min)"></div>
+      <div class="meta" x-text="s?.today_blocks ? `${s.today_blocks} ${s.today_blocks===1?'bloco':'blocos'} de foco` : 'nenhum bloco ainda'"></div>
+      <div class="sep"></div>
+      <p class="label">
+        <span>hábitos</span>
+        <span class="when">
+          <button :class="habitDay==='hoje' && 'on'" @click="habitDay='hoje'">hoje</button>
+          <button :class="habitDay==='ontem' && 'on'" @click="habitDay='ontem'">ontem</button>
+        </span>
+      </p>
+      <div class="habits">
+        <template x-for="h in habitDefs" :key="h.key">
+          <button class="habit" :class="habitOn(h.key) && 'on'" @click="toggleHabit(h.key)">
+            <span class="check"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 6.2l2.4 2.3 4.6-5" fill="none" stroke="#1a171d" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <span class="hbody">
+              <span class="hrow"><span x-text="h.name"></span><span class="wk" x-text="habitCount(h)"></span></span>
+              <template x-if="h.goal"><span class="segs"><template x-for="i in h.goal"><i :class="i <= s?.week?.[h.key] && 'on'"></i></template></span></template>
+              <template x-if="!h.goal"><span class="days"><template x-for="(on,i) in s?.week?.faculdade || []"><span :class="on && 'on'" x-text="'STQQSSD'[i]"></span></template></span></template>
+            </span>
+          </button>
+        </template>
+      </div>
+    </section>
+
+    <!-- Coluna esquerda: No PC Hoje + Foco nesta semana -->
+    <div class="col4">
+      <section class="card">
+        <p class="label"><span>no PC hoje</span><span class="r" x-text="fmtMin(pcTotal())"></span></p>
+        <div class="bar">
+          <i :style="`flex:${s?.pc?.active||0};background:var(--active)`"></i>
+          <i :style="`flex:${s?.pc?.distraction||0};background:var(--distract)`"></i>
+          <i :style="`flex:${s?.pc?.cheap||0};background:var(--cheap)`"></i>
+          <i :style="`flex:${s?.pc?.idle||0};background:var(--line-2)`"></i>
+        </div>
+        <div class="legend">
+          <span style="--c:var(--active)" x-text="`ativo ${fmtMin(s?.pc?.active)}`"></span>
+          <span style="--c:var(--distract)" x-text="`distração ${fmtMin(s?.pc?.distraction)}`"></span>
+          <span style="--c:var(--cheap)" x-text="`barata ${fmtMin(s?.pc?.cheap)}`"></span>
+          <span style="--c:var(--line-2)" x-text="`inativo ${fmtMin(s?.pc?.idle)}`"></span>
+        </div>
+        <div class="dlist">
+          <template x-for="d in (s?.distractions||[]).filter(d => d.min >= 1).slice(0,4)" :key="d.label">
+            <div>
+              <span><span x-text="d.label"></span><span class="cheap-tag" x-show="d.cheap">barata</span></span>
+              <b :class="d.cheap && 'cheap'" x-text="fmtMin(d.min)"></b>
+            </div>
+          </template>
+          <div class="quiet" x-show="!(s?.distractions||[]).some(d => d.min >= 1)">nenhuma distração registrada hoje</div>
+        </div>
+      </section>
+
+      <section class="card">
+        <p class="label"><span>foco nesta semana</span><span class="r">minutos por dia</span></p>
+        <div class="week">
+          <template x-for="(m,i) in s?.week?.focus_min || []">
+            <div class="col" :title="s?.week?.faculdade?.[i] ? 'dia de faculdade' : ''">
+              <span class="v" x-text="m ? fmtShort(m) : ''"></span>
+              <i class="b" :class="!m ? 'zero' : (i===todayIdx() ? 'hi' : '')" :style="`height:${weekBar(m)}%`"></i>
+              <span class="d" :class="i===todayIdx() && 'today'" x-text="'STQQSSD'[i]"></span>
+              <span class="fdot" :class="s?.week?.faculdade?.[i] && 'on'"></span>
+            </div>
+          </template>
+        </div>
+        <div class="legend" x-show="(s?.week?.faculdade||[]).some(Boolean)"><span style="--c:var(--h3)">dia de faculdade</span></div>
+      </section>
+    </div>
+
+    <!-- Heatmaps -->
+    <section class="card s8">
+      <div class="heats">
+        <div class="heat">
+          <p class="label"><span class="h2">Foco</span><span class="r">horas por dia</span></p>
+          <div class="months" :style="cols(s?.focus_grid)"><template x-for="m in months(s?.focus_grid)"><span :style="`grid-column:${m.col+1}`" x-text="m.label"></span></template></div>
+          <div class="cells" :style="cols(s?.focus_grid)">
+            <template x-for="c in s?.focus_grid || []" :key="c.d">
+              <i class="cell" :class="[focusLvl(c.m), c.d===s.today && 'today']" :title="`${fmtDate(c.d)} · ${c.m ? fmtMin(c.m) : 'sem foco'}${c.f ? ' · faculdade' : ''}`"></i>
+            </template>
+          </div>
+          <div class="scale"><span>menos</span><i class="cell"></i><i class="cell f1"></i><i class="cell f2"></i><i class="cell f3"></i><i class="cell f4"></i><span>3h+</span></div>
+        </div>
+        <div class="heat">
+          <p class="label"><span class="h2">Leitura</span><span class="r">clique num dia para marcar</span></p>
+          <div class="months" :style="cols(s?.reading_grid)"><template x-for="m in months(s?.reading_grid)"><span :style="`grid-column:${m.col+1}`" x-text="m.label"></span></template></div>
+          <div class="cells" :style="cols(s?.reading_grid)">
+            <template x-for="c in s?.reading_grid || []" :key="c.d">
+              <i class="cell clickable" :class="[c.v && 'read', c.d===s.today && 'today']" :title="`${fmtDate(c.d)} · ${c.v ? 'leu' : '—'}`" @click="toggleHabit('leitura', c.d)"></i>
+            </template>
+          </div>
+        </div>
+        <div class="heat" style="grid-column:1/-1">
+          <div class="heat-foot">
+            <p class="label" style="margin-bottom:12px"><span class="h2">Academia</span></p>
+            <span class="quiet">uma barra por semana · últimas 52</span>
+          </div>
+          <div class="strip">
+            <template x-for="(w,i) in s?.gym_weeks || []" :key="w.w">
+              <i class="cell" :class="[gymLvl(w.n), i===51 && 'today']" :title="`semana de ${fmtDate(w.w)} · ${w.n}×`"></i>
+            </template>
+          </div>
+          <div class="scale"><span>0</span><i class="cell"></i><i class="cell h2c"></i><i class="cell h3"></i><i class="cell h4"></i><span>3+</span></div>
+        </div>
+
+        <div class="heat">
+          <p class="label"><span class="h2">Por semana</span><span class="r" x-show="s?.weekly_avg" x-text="`média ${fmtMin(s?.weekly_avg)}`"></span></p>
+          <div class="chart">
+            <i class="avg" x-show="s?.weekly_avg" :style="`bottom:${pct(s?.weekly_avg, weeklyScale())}%`"></i>
+            <template x-for="(w,i) in s?.weekly || []" :key="w.w">
+              <div class="slot" :title="`semana de ${fmtDate(w.w)} · ${w.m ? fmtMin(w.m) : 'sem foco'}`">
+                <span class="val" x-show="w.m && (i === 11 || w.m === weeklyMax())" x-text="fmtShort(w.m)"></span>
+                <i class="bar1" :class="[!w.m && 'zero', i === 11 && 'now']" :style="`height:${pct(w.m, weeklyScale())}%`"></i>
+              </div>
+            </template>
+          </div>
+          <div class="axis"><span x-text="s?.weekly?.length ? fmtDate(s.weekly[0].w) : ''"></span><span>esta semana</span></div>
+        </div>
+
+        <div class="heat">
+          <p class="label"><span class="h2">Horário</span><span class="r" x-text="s?.best_hours ? `melhor: ${s.best_hours[0]}h–${s.best_hours[1]}h` : 'últimos 30 dias'"></span></p>
+          <div class="chart hours">
+            <template x-for="(m,h) in s?.hours || []" :key="h">
+              <div class="slot" :title="`${h}h · ${m ? fmtMin(m) + ' nos últimos 30 dias' : 'sem foco'}`">
+                <i class="bar1" :class="[!m && 'zero', inBest(h) && 'now']" :style="`height:${pct(m, hoursMax())}%`"></i>
+              </div>
+            </template>
+          </div>
+          <div class="axis hours"><span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>23h</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Histórico -->
+    <section class="card s8">
+      <p class="label">
+        <span>histórico de blocos</span>
+        <span class="r">o que você fez em cada bloco ·
+          <button class="addlog" @click="logf.open ? (logf.open = false) : openLog()" title="Registrar foco que você fez sem começar o timer">+ foco sem timer</button></span>
+      </p>
+      <div class="logform" x-show="logf.open" @input="logf.err = ''">
+        <input class="num" type="number" min="5" max="600" step="5" x-model.number="logf.minutes" title="minutos de foco">
+        <span class="u">min, terminou às</span>
+        <input class="tm" type="time" x-model="logf.end">
+        <input class="what" x-model="logf.intention" maxlength="140" placeholder="o que você fez?" @keydown.enter="saveLog()">
+        <span class="quiet" x-text="logRange()"></span>
+        <button class="ghost" @click="saveLog()">registrar</button>
+        <button class="link" @click="logf.open = false">cancelar</button>
+        <p class="logerr" x-show="logf.err || logClash()" x-text="logf.err || logClash()"></p>
+      </div>
+      <div class="rows">
+        <div class="row head"><span>início</span><span>intenção</span><span class="n">foco</span><span class="n"></span></div>
+        <template x-for="r in s?.recent || []" :key="r.id">
+          <div class="row">
+            <span class="t" x-text="when(r.started_at)"></span>
+            <span class="i" x-text="r.intention || '—'"></span>
+            <span class="n" :class="r.status !== 'cancelled' && 'hi'" x-text="r.status === 'manual' ? fmtMin(r.focus_min) : `${fmtMin(r.focus_min)}/${r.planned_min}m`"></span>
+            <span class="n">
+              <span x-text="r.status === 'done' ? 'completo' : r.status === 'manual' ? 'sem timer' : 'parado antes'"></span>
+              <button class="del" x-show="r.status === 'manual'" @click="deleteLog(r.id)" title="apagar este registro">×</button>
+            </span>
+          </div>
+        </template>
+        <div class="quiet" x-show="!(s?.recent||[]).length" style="padding-top:6px">os blocos concluídos aparecem aqui</div>
+      </div>
+    </section>
+
+    <!-- Distração por dia -->
+    <section class="card s4 distcard">
+      <p class="label"><span>distração por dia</span><span class="r">últimas 2 semanas</span></p>
+      <div class="chart dist">
+        <template x-for="(d,i) in s?.distraction_days || []" :key="d.d">
+          <div class="slot" :title="`${fmtDate(d.d)} · ${d.n + d.c ? `distração ${fmtMin(d.n)} · barata ${fmtMin(d.c)}` : 'sem distração'}`">
+            <span class="val" x-show="d.n + d.c && (i === s.distraction_days.length - 1 || d.n + d.c === distMax())" x-text="fmtShort(d.n + d.c)"></span>
+            <i class="bar1 dn" x-show="d.n" :style="`height:${pct(d.n, distScale())}%`"></i>
+            <i class="bar1 dc" x-show="d.c" :class="d.n && 'under'" :style="`height:${pct(d.c, distScale())}%`"></i>
+          </div>
+        </template>
+      </div>
+      <div class="axis"><span x-text="s?.distraction_days?.length ? fmtDate(s.distraction_days[0].d) : ''"></span><span>hoje</span></div>
+      <div class="legend">
+        <span style="--c:var(--distract)">distração: vídeo longo, jogo, chat</span>
+        <span style="--c:var(--cheap)">barata: feed, Shorts, Instagram</span>
+      </div>
+    </section>
+  </main>
+
+  <!-- =============================================================== FINANÇAS -->
+  <main id="panel-financas" class="grid" role="tabpanel" aria-labelledby="tab-financas" hidden :hidden="view!=='financas' || !f">
+    <section class="card s12">
+      <p class="label">
+        <span class="h2" x-text="monthTitle()"></span>
+        <span class="monthnav"><button @click="shiftMonth(-1)">‹</button><button @click="shiftMonth(1)">›</button></span>
+      </p>
+      <div class="stats">
+        <div class="stat"><div class="k">recebido</div><div class="v" x-text="brl(f?.income)"></div></div>
+        <div class="stat"><div class="k">fixos</div><div class="v" x-text="brl(f?.fixed_total)"></div></div>
+        <div class="stat"><div class="k">gastos variáveis</div><div class="v" x-text="brl(f?.spent)"></div></div>
+        <div class="stat"><div class="k">saldo livre</div><div class="v" :class="f?.free >= 0 ? 'pos' : 'neg'" x-text="brl(f?.free)"></div></div>
+        <div class="stat"><div class="k" x-text="f?.days_left ? `por dia · ${f.days_left} restantes` : 'por dia'"></div><div class="v acc" x-text="brl(f?.per_day)"></div></div>
+      </div>
+      <div class="budget" x-show="f?.income > 0">
+        <div class="bar">
+          <i :style="`flex:${f?.fixed_total};background:var(--h2)`"></i>
+          <i :style="`flex:${f?.spent};background:var(--accent)`"></i>
+          <i :style="`flex:${Math.max(f?.free||0,0)};background:var(--line)`"></i>
+        </div>
+        <div class="legend"><span style="--c:var(--h2)">fixos</span><span style="--c:var(--accent)">variáveis</span><span style="--c:var(--line)">livre</span></div>
+      </div>
+    </section>
+
+    <section class="card s7">
+      <p class="label"><span>lançamentos</span></p>
+      <form class="inline" @submit.prevent="addTx()">
+        <input class="field money" x-model="tx.amount" placeholder="0,00" inputmode="decimal" required>
+        <input class="field grow" x-model="tx.description" placeholder="descrição">
+        <input class="field cat" x-model="tx.category" placeholder="categoria" list="cats">
+        <div class="seg"><button type="button" :class="tx.kind==='out' && 'on'" @click="tx.kind='out'">saída</button><button type="button" :class="tx.kind==='in' && 'on'" @click="tx.kind='in'">entrada</button></div>
+        <button class="add">lançar</button>
+        <datalist id="cats"><template x-for="c in categories"><option :value="c"></option></template></datalist>
+      </form>
+      <div style="margin-top:16px">
+        <template x-for="t in f?.transactions || []" :key="t.id">
+          <div class="tx">
+            <span class="quiet" x-text="fmtDate(t.day)"></span>
+            <span x-text="t.description || '—'"></span>
+            <span class="quiet" x-text="t.category"></span>
+            <span class="amt" :class="t.kind" x-text="(t.kind==='in' ? '+' : '−') + brl(t.amount_cents)"></span>
+            <button class="x" @click="del(`/api/finance/tx/${t.id}`)">×</button>
+          </div>
+        </template>
+        <div class="quiet" x-show="!(f?.transactions||[]).length">nada lançado neste mês</div>
+      </div>
+    </section>
+
+    <section class="card s5">
+      <p class="label"><span>gastos fixos mensais</span><span class="r" x-text="brl(f?.fixed_total)"></span></p>
+      <form class="inline" @submit.prevent="addFixed()">
+        <input class="field grow" x-model="fx.name" placeholder="ex.: celular" required>
+        <input class="field money" x-model="fx.amount" placeholder="0,00" inputmode="decimal" required>
+        <button class="add">+</button>
+      </form>
+      <div style="margin-top:16px">
+        <template x-for="x in f?.fixed || []" :key="x.id">
+          <div class="tx" style="grid-template-columns:1fr 110px 24px">
+            <span x-text="x.name"></span>
+            <span class="amt" x-text="brl(x.amount_cents)"></span>
+            <button class="x" @click="del(`/api/finance/fixed/${x.id}`)">×</button>
+          </div>
+        </template>
+      </div>
+      <template x-if="f?.by_category?.length">
+        <div>
+          <div class="sep"></div>
+          <p class="label"><span>variáveis por categoria</span></p>
+          <div class="dlist">
+            <template x-for="c in f.by_category" :key="c.category">
+              <div><span x-text="c.category"></span><b style="color:var(--text)" x-text="brl(c.cents)"></b></div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </section>
+  </main>
+
+  <!-- =============================================================== RESUMO DO DIA -->
+  <div class="modal-backdrop"
+       id="modal-resumo"
+       role="dialog"
+       aria-modal="true"
+       aria-labelledby="summary-title"
+       x-show="summary.open"
+       x-transition.opacity
+       @click.self="closeSummary()"
+       @keydown.escape.window="summary.open && closeSummary()">
+    <div class="modal">
+      <div class="modal-head">
+        <div>
+          <h2 class="h2" id="summary-title">Resumo do dia</h2>
+          <p class="quiet modal-sub" x-text="summaryDateTitle()"></p>
+        </div>
+        <button type="button" class="modal-x" x-ref="summaryClose" @click="closeSummary()" aria-label="Fechar resumo">×</button>
+      </div>
+
+      <div class="summary-meta" x-show="summary.data">
+        <span>foco <b x-text="fmtMin(summary.data?.focus_minutes)"></b> <span class="quiet" x-text="`(${summary.data?.blocks_count || 0} ${(summary.data?.blocks_count || 0) === 1 ? 'bloco' : 'blocos'})`"></span></span>
+        <span>hábitos <b x-text="summaryHabitsLabel()"></b></span>
+        <span>no PC <b x-text="fmtMin(summary.data?.pc?.total)"></b></span>
+      </div>
+
+      <div class="modal-body">
+        <div class="quiet summary-loading" x-show="summary.loading">carregando resumo…</div>
+        <pre class="summary-pre" x-show="!summary.loading && summary.data" x-text="summary.data?.markdown || ''"></pre>
+      </div>
+
+      <div class="modal-foot">
+        <span class="quiet mono" x-text="summary.data ? `bentofocus-${summary.data.day}.md` : ''"></span>
+        <div class="modal-actions">
+          <button type="button" class="ghost summary-copy" :class="summary.copied && 'copied'" :disabled="!summary.data" @click="copySummary()" x-text="summary.copied ? 'copiado' : 'copiar'"></button>
+          <a class="go summary-dl" :href="summaryDownloadUrl()" :download="`bentofocus-${summary.data?.day || s?.today || 'resumo'}.md`" x-show="summary.data">baixar .md</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="err" x-show="error" x-transition x-text="error"></div>
+</div>
+</body>
+</html>
