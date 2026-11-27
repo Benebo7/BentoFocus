@@ -21,7 +21,7 @@ Personal local productivity hub for Linux (X11): distraction-blocking focus bloc
 - **Guilt-free habits**: Daily reading, weekly gym sessions (goal: 3), and university check-ins — tracked with heatmaps and "active days in the last 30" instead of fragile streaks.
 - **Simple finances**: Monthly income, fixed monthly expenses, and variable transactions → free balance and daily allowance.
 - **Daily summary & export**: In-app daily summary modal and `/api/export/daily` endpoint supporting `format=json` and `format=markdown`.
-- **Telegram AI Agent (optional)**: Voice/text task capture via Telegram powered by Gemini tool-calling, timed reminders, a scheduled morning digest (agenda, GitHub target repo PRs/issues, unread IMAP email), and optional Turso (libSQL) sync. See [`agent/README.md`](agent/README.md).
+- **Telegram AI Agent (archived)**: Standalone Telegram + Gemini tool-calling companion kept in [`agent/`](agent/README.md) as a reference implementation (no longer actively deployed or synced with the desktop app).
 
 ## Installation
 
@@ -55,7 +55,7 @@ To bind a global keyboard shortcut in your desktop environment, point it to:
 
 ## Configuration & Development
 
-All core settings live in [`bentofocus/config.py`](bentofocus/config.py): distraction matching rules (window title or `WM_CLASS` regexes; Slack and Spotify are intentionally excluded), browser classes, idle threshold, block durations, weekly habit goals, `DAY_START_HOUR`, and optional `TURSO_URL` / `TURSO_TOKEN` sync variables.
+All core settings live in [`bentofocus/config.py`](bentofocus/config.py): distraction matching rules (window title or `WM_CLASS` regexes; Slack and Spotify are intentionally excluded), browser classes, idle threshold, block durations, weekly habit goals, and `DAY_START_HOUR`.
 
 Inspect what the window collector sees in real time without recording or blocking anything:
 
@@ -83,11 +83,11 @@ systemd --user (bentofocus.service)
     ├── collector (asyncio): xdotool/xprop every 3s (1s during focus) + XInput2 / IdleMonitor
     │   ├── records continuous window intervals (WindowSpan)
     │   └── during focus blocks: closes distracting browser tabs / minimizes apps
-    ├── SQLite (~/.local/share/bentofocus/bentofocus.db) + optional Turso/libSQL task sync
+    ├── SQLite (~/.local/share/bentofocus/bentofocus.db)
     └── REST API + offline static UI (Alpine.js + local fonts)
 
 bentofocus/window.py   GTK3/WebKit2 wrapper (--mini launches the floating miniplayer)
-agent/                 Optional always-on Telegram bot + Gemini agent + morning digest
+agent/                 Archived Telegram bot + Gemini agent + morning digest reference
 ```
 
 ## Limitations

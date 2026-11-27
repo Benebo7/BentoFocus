@@ -43,7 +43,6 @@ def _session_dict(s: FocusSession) -> dict:
         "status": s.status,
         "intention": s.intention,
         "allow_youtube": s.allow_youtube,
-        "task_id": s.task_id,
         "focus_min": round(_focus_s(s) / 60, 1),
     }
 

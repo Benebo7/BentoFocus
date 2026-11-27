@@ -89,19 +89,3 @@ BROWSER_CLASSES = re.compile(r"^(zen|app\.zen_browser\.zen|firefox|brave-browser
 HABITS = ("leitura", "academia", "faculdade")
 WEEKLY_GOALS = {"academia": 3, "leitura": 7}
 
-# Sincronização com Turso / libSQL (opcional: sincroniza tarefas com o bot da Azure)
-# Lê do ambiente ou carrega do .env / agent/.env se existirem
-for _env_candidate in (Path(__file__).parent.parent / ".env", Path(__file__).parent.parent / "agent" / ".env"):
-    if _env_candidate.exists():
-        try:
-            for _line in _env_candidate.read_text().splitlines():
-                _line = _line.strip()
-                if _line and not _line.startswith("#") and "=" in _line:
-                    _k, _v = _line.split("=", 1)
-                    os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
-        except Exception:
-            pass
-
-TURSO_URL = os.environ.get("TURSO_URL", "")
-TURSO_TOKEN = os.environ.get("TURSO_TOKEN", "")
-

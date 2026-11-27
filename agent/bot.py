@@ -17,8 +17,6 @@ from telegram.ext import (
 from . import config, db
 from .digest import generate_morning_digest
 from .gemini_agent import GeminiAgent
-from .gemini_parser import GeminiParser
-from .models import GeminiVoiceResponse
 
 logger = logging.getLogger("agent.bot")
 
@@ -94,72 +92,6 @@ def _format_tomorrow_agenda() -> str:
         lines.append("")
 
     return "\n".join(lines).strip()
-
-
-def _execute_voice_actions(result: GeminiVoiceResponse) -> list[str]:
-    logs = []
-    today_str = config.today_brt().isoformat()
-    for act in result.actions:
-        if act.action_type == "create" and act.task:
-            t = act.task
-            parent_id = None
-            if t.parent_topic:
-                parent_id = db.find_or_create_parent_topic(t.parent_topic)
-
-            kind = "todo" if t.kind in ("todo", "event") else "focus"
-            day = t.due_date
-            status = "today" if t.due_date == today_str else "inbox"
-
-            created = db.create_task(
-                title=t.title,
-                parent_id=parent_id,
-                description=t.description,
-                kind=kind,
-                time=t.time,
-                reminder_minutes=t.reminder_minutes,
-                planned_blocks=t.planned_blocks if kind == "focus" else 1,
-                day=day,
-                status=status,
-                source="telegram",
-            )
-            if kind == "focus":
-                folder_str = f"[{t.parent_topic}] " if t.parent_topic else ""
-                logs.append(f"🎯 *{folder_str}{created.title}* ({created.planned_blocks}b)")
-            else:
-                date_str = f" p/ {created.day}" if created.day else " (sem data)"
-                time_str = f" às {created.time}" if created.time else ""
-                logs.append(f"📋 *{created.title}*{time_str}{date_str}")
-
-        elif act.action_type == "set_date" and act.target_task_id:
-            db.set_task_date(act.target_task_id, act.target_date)
-            date_label = "sem data" if act.target_date == "clear" or not act.target_date else act.target_date
-            logs.append(f"📅 Item `{act.target_task_id}` atualizado para `{date_label}`")
-
-        elif act.action_type == "pull_today" and act.target_task_id:
-            if act.target_date and act.target_date != today_str:
-                db.set_task_date(act.target_task_id, act.target_date)
-                logs.append(f"📅 Item `{act.target_task_id}` agendado para `{act.target_date}`")
-            else:
-                db.pull_to_today(act.target_task_id)
-                logs.append(f"☀️ Item `{act.target_task_id}` puxado para a lista de Hoje")
-
-        elif act.action_type == "progress" and act.target_task_id:
-            db.record_progress(act.target_task_id)
-            logs.append(f"🔥 +1 bloco registrado no item `{act.target_task_id}`!")
-
-        elif act.action_type == "postpone" and act.target_task_id:
-            db.postpone_task(act.target_task_id, days=act.postpone_days)
-            logs.append(f"⏩ Item `{act.target_task_id}` adiado em {act.postpone_days} dia(s)")
-
-        elif act.action_type == "complete" and act.target_task_id:
-            db.complete_task(act.target_task_id)
-            logs.append(f"🎉 Item `{act.target_task_id}` concluído!")
-
-        elif act.action_type == "delete" and act.target_task_id:
-            db.delete_task(act.target_task_id)
-            logs.append(f"🗑️ Item `{act.target_task_id}` removido")
-
-    return logs
 
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):

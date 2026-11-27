@@ -42,7 +42,7 @@ class FocusManager:
     # --- ações --------------------------------------------------------------
 
     async def start(
-        self, intention: str, minutes: int, allow_youtube: bool, cycles: int = 1, spotify: bool = False, task_id: int | None = None
+        self, intention: str, minutes: int, allow_youtube: bool, cycles: int = 1, spotify: bool = False
     ) -> FocusSession:
         if self.current is not None:
             raise ValueError("Já existe um bloco em andamento.")
@@ -50,9 +50,9 @@ class FocusManager:
         plan = None
         if cycles > 1:
             plan = dict(intention=intention.strip(), minutes=minutes, allow_youtube=allow_youtube,
-                        spotify=spotify, total=cycles, index=1, next_at=None, task_id=task_id)
+                        spotify=spotify, total=cycles, index=1, next_at=None)
         self._save_plan(plan)
-        return await self._open(intention, minutes, allow_youtube, spotify, task_id=task_id)
+        return await self._open(intention, minutes, allow_youtube, spotify)
 
     async def extend(self, minutes: int) -> None:
         """+N minutos de FOCO. Com bloco rodando, estica o bloco. Na pausa logo
@@ -207,7 +207,7 @@ class FocusManager:
 
     # --- internos -------------------------------------------------------------
 
-    async def _open(self, intention: str, minutes: int, allow_youtube: bool, spotify: bool = False, task_id: int | None = None) -> FocusSession:
+    async def _open(self, intention: str, minutes: int, allow_youtube: bool, spotify: bool = False) -> FocusSession:
         now = _now()
         s = FocusSession(
             day=logical_day(now),
@@ -215,7 +215,6 @@ class FocusManager:
             planned_min=minutes,
             intention=intention.strip(),
             allow_youtube=allow_youtube,
-            task_id=task_id,
         )
         with session() as db:
             db.add(s)
@@ -238,7 +237,7 @@ class FocusManager:
         # Avisa antes de abrir: o bloco silencia as notificações do GNOME.
         await x11.notify(f"Bloco {p['index']} de {p['total']} começou", p["intention"] or "Bora.")
         await x11.play_sound("bell")
-        await self._open(p["intention"], p["minutes"], p["allow_youtube"], p.get("spotify", False), task_id=p.get("task_id"))
+        await self._open(p["intention"], p["minutes"], p["allow_youtube"], p.get("spotify", False))
 
     async def _auto_next(self, at: datetime) -> None:
         await asyncio.sleep(max(0.0, (at - datetime.now()).total_seconds()))

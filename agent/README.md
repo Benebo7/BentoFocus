@@ -3,7 +3,7 @@
 Optional always-on **Telegram** companion for BentoFocus. It turns voice notes and text messages into structured tasks, schedules timed reminders, compiles a morning digest (agenda, GitHub repository activity, and unread IMAP emails), and syncs tasks/day plans with the desktop app via **Turso (libSQL)** (or local SQLite for testing).
 
 > [!NOTE]
-> Like the rest of BentoFocus, this agent was built 100% with AI-assisted coding for personal use. The bot replies and Gemini prompts are currently in Brazilian Portuguese (`pt-BR`).
+> **Archived:** This agent is no longer actively deployed and is no longer synced with the desktop app, and is kept in the repository as a reference implementation. Like the rest of BentoFocus, it was built 100% with AI-assisted coding for personal use; bot replies and Gemini prompts are in Brazilian Portuguese (`pt-BR`).
 
 ## Features
 

@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, NaiveDatetime
 from sqlmodel import select
 
-from . import config, exporter, mini, music, stats, tasks
+from . import config, exporter, mini, music, stats
 from .collector.worker import collector
 from .db import init_db, logical_day, session
 from .focus import focus
@@ -115,7 +115,6 @@ class StartIn(BaseModel):
     allow_youtube: bool = False
     cycles: int = Field(1, ge=1, le=6)
     spotify: bool = False
-    task_id: int | None = None
 
 
 @app.post("/api/focus/start")
@@ -127,7 +126,6 @@ async def focus_start(body: StartIn):
             body.allow_youtube,
             body.cycles,
             body.spotify,
-            task_id=body.task_id,
         )
     except ValueError as e:
         raise HTTPException(409, str(e))
@@ -268,102 +266,6 @@ async def fixed_delete(fixed_id: int):
             db.delete(row)
             db.commit()
     return stats.finance()
-
-
-# --- tarefas, estudos & agenda ------------------------------------------------
-
-
-class TaskIn(BaseModel):
-    title: str = Field(min_length=1, max_length=160)
-    parent_id: int | None = None
-    description: str = Field("", max_length=500)
-    kind: str = "focus"  # focus | todo
-    time: str | None = None
-    reminder_minutes: int = 15
-    planned_blocks: int = Field(1, ge=1, le=8)
-    completed_blocks: int = 0
-    day: date | None = None
-    status: str = "inbox"
-
-
-class TaskDateIn(BaseModel):
-    day: date | None = None
-    status: str | None = None
-
-
-@app.get("/api/tasks")
-async def tasks_get():
-    return tasks.get_organized_tasks()
-
-
-@app.post("/api/tasks")
-async def tasks_add(body: TaskIn):
-    tasks.create_task(
-        title=body.title,
-        parent_id=body.parent_id,
-        description=body.description,
-        kind=body.kind,
-        time=body.time,
-        reminder_minutes=body.reminder_minutes,
-        planned_blocks=body.planned_blocks,
-        completed_blocks=body.completed_blocks,
-        day=body.day,
-        status=body.status,
-    )
-    return tasks.get_organized_tasks()
-
-
-@app.post("/api/tasks/{task_id}/toggle")
-async def tasks_toggle(task_id: int):
-    tasks.toggle_task(task_id)
-    return tasks.get_organized_tasks()
-
-
-@app.post("/api/tasks/{task_id}/progress")
-async def tasks_progress(task_id: int):
-    tasks.record_progress(task_id)
-    return tasks.get_organized_tasks()
-
-
-@app.post("/api/tasks/{task_id}/pull")
-async def tasks_pull(task_id: int):
-    tasks.pull_to_today(task_id)
-    return tasks.get_organized_tasks()
-
-
-@app.post("/api/tasks/{task_id}/set-date")
-async def tasks_set_date(task_id: int, body: TaskDateIn):
-    tasks.set_task_date(task_id, body.day, body.status)
-    return tasks.get_organized_tasks()
-
-
-@app.delete("/api/tasks/{task_id}")
-async def tasks_delete(task_id: int):
-    tasks.delete_task(task_id)
-    return tasks.get_organized_tasks()
-
-
-@app.post("/api/tasks/sync")
-async def tasks_sync():
-    res = tasks.sync_turso()
-    data = tasks.get_organized_tasks()
-    return {"sync_result": res, "tasks": data}
-
-
-class DayPlanIn(BaseModel):
-    day: date | None = None
-    content: str = ""
-
-
-@app.get("/api/day-plan")
-async def day_plan_get(day: date | None = None):
-    return tasks.get_day_plan(day)
-
-
-@app.post("/api/day-plan")
-async def day_plan_set(body: DayPlanIn):
-    target_day = body.day or logical_day()
-    return tasks.set_day_plan(target_day, body.content)
 
 
 # --- resumo & exportação ------------------------------------------------------
